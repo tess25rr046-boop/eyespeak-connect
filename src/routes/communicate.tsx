@@ -23,6 +23,8 @@ function CommunicatePage() {
   const [status, setStatus] = useState<FaceDetectionStatus>({ facePresent: false, landmarksReady: false });
   const [lastMessage, setLastMessage] = useState(""), [voiceOn, setVoiceOn] = useState(true), [demoMode, setDemoMode] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false), [messageDraft, setMessageDraft] = useState(""), [cameraError, setCameraError] = useState("");
+  const selectedIdRef = useRef(selectedId), voiceOnRef = useRef(voiceOn), demoModeRef = useRef(demoMode);
+  selectedIdRef.current = selectedId; voiceOnRef.current = voiceOn; demoModeRef.current = demoMode;
   const selected = useMemo(() => COMMUNICATION_OPTIONS.find((o) => o.id === selectedId) ?? COMMUNICATION_OPTIONS[0], [selectedId]);
 
   useEffect(() => {
@@ -30,13 +32,13 @@ function CommunicatePage() {
     const offStatus = detector.onStatus(setStatus);
     const offGesture = detector.onGesture((frame) => {
       setDetectedGesture(frame.gesture);
-      if (demoMode) return;
-      if (frame.gesture === "blink-both") selectOption(selectedId, true);
+      if (demoModeRef.current) return;
+      if (frame.gesture === "blink-both") selectOption(selectedIdRef.current, true);
       else if (frame.gesture in directionGroups) navigateDirection(frame.gesture as keyof typeof directionGroups);
     });
     startCamera().catch((e) => setCameraError(e instanceof Error ? e.message : "Camera access is unavailable."));
     return () => { offStatus(); offGesture(); detector.dispose(); streamRef.current?.getTracks().forEach((t) => t.stop()); window.speechSynthesis?.cancel(); };
-    // The detector is intentionally initialized once for this screen.
+    // Detector lifecycle intentionally runs once for this screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -48,20 +50,20 @@ function CommunicatePage() {
     } catch (e) { setCameraError(e instanceof Error ? e.message : "Camera permission was denied or the camera is unavailable."); }
   }
   function navigateDirection(direction: keyof typeof directionGroups) {
-    const group = directionGroups[direction], current = group.indexOf(selectedId), next = current === -1 ? group[0] : group[(current + 1) % group.length];
+    const group = directionGroups[direction], current = group.indexOf(selectedIdRef.current), next = current === -1 ? group[0] : group[(current + 1) % group.length];
     setSelectedId(next);
   }
   function selectOption(id: string, speak = false) {
     const option = COMMUNICATION_OPTIONS.find((o) => o.id === id); if (!option) return;
     setSelectedId(id); if (option.message) setLastMessage(option.message);
-    if (speak && option.message && voiceOn) speakText(option.message);
+    if (speak && option.message && voiceOnRef.current) speakText(option.message);
   }
   function speakText(text: string) { if (!("speechSynthesis" in window) || !text) return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 0.92; window.speechSynthesis.speak(u); }
-  function sendCustomMessage() { const text = messageDraft.trim(); if (!text) return; setLastMessage(text); if (voiceOn) speakText(text); setMessageDraft(""); }
+  function sendCustomMessage() { const text = messageDraft.trim(); if (!text) return; setLastMessage(text); if (voiceOnRef.current) speakText(text); setMessageDraft(""); }
   function handleKeyboard(e: React.KeyboardEvent) {
     if (e.key === "ArrowLeft") navigateDirection("look-left"); if (e.key === "ArrowRight") navigateDirection("look-right");
     if (e.key === "ArrowUp") navigateDirection("look-up"); if (e.key === "ArrowDown") navigateDirection("look-down");
-    if (e.key === "Enter" || e.key === " ") selectOption(selectedId, true);
+    if (e.key === "Enter" || e.key === " ") selectOption(selectedIdRef.current, true);
   }
 
   return <div className="ng-page" tabIndex={0} onKeyDown={handleKeyboard}>
@@ -80,7 +82,7 @@ function CommunicatePage() {
         <div className="control-row"><button onClick={() => setVoiceOn((v) => !v)} className="secondary-btn">{voiceOn ? "🔊 Voice ON" : "🔇 Voice OFF"}</button><button onClick={() => setDetailsOpen((v) => !v)} className="secondary-btn">{detailsOpen ? "Hide Details" : "Detection Details"}</button></div>
         {detailsOpen && <div className="details-box"><p>Face detected: <b>{status.facePresent ? "YES" : "NO"}</b></p><p>Current direction: <b>{detectedGesture === "none" ? "NONE" : gestureLabels[detectedGesture].replace("Looking ", "").toUpperCase()}</b></p><p>Blink: <b>{detectedGesture === "blink-both" ? "YES" : "NO"}</b></p><p>Selected option: <b>{selected.label.toUpperCase()}</b></p><p>MediaPipe status: <b>{status.landmarksReady ? "CONNECTED" : "LOADING"}</b></p></div>}
         <div className="mini-camera"><video ref={videoRef} autoPlay muted playsInline/><span>{demoMode ? "DEMO MODE — no gesture detection" : "LIVE CAMERA"}</span></div>
-        <button className="alert-demo-btn" onClick={() => { setSelectedId("help"); setLastMessage("I need help."); if (voiceOn) speakText("I need help."); }}>Preview help alert</button>
+        <button className="alert-demo-btn" onClick={() => { setSelectedId("help"); setLastMessage("I need help."); if (voiceOnRef.current) speakText("I need help."); }}>Preview help alert</button>
       </aside>
     </main>
   </div>;
