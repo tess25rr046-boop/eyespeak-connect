@@ -1,146 +1,51 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { classifyCameraError, startCamera, type CameraHandle, type CameraState } from "../lib/camera";
-import { createPendingDetector, type GestureDetector } from "../lib/gestures";
-import { CameraPreview } from "../components/CameraPreview";
-import { StatusIndicator } from "../components/StatusIndicator";
+import { createMediaPipeDetector, type FaceDetectionStatus } from "../lib/gestures";
 
 export const Route = createFileRoute("/setup")({
-  head: () => ({
-    meta: [
-      { title: "Camera Setup — NeuroGesture" },
-      { name: "description", content: "Enable your webcam and confirm face detection before starting gesture-based communication." },
-      { property: "og:title", content: "Camera Setup — NeuroGesture" },
-      { property: "og:description", content: "Enable your webcam and confirm face detection." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Camera Setup — NeuroGesture" }, { name: "description", content: "Connect your laptop webcam and verify real MediaPipe face tracking." }] }),
   component: SetupPage,
 });
 
-const cameraStatusText: Record<CameraState, string> = {
-  idle: "Not started",
-  requesting: "Requesting permission…",
-  active: "Active",
-  stopped: "Stopped",
-  error: "Error — no camera found",
-  denied: "Permission denied",
-};
-
 function SetupPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const cameraRef = useRef<CameraHandle | null>(null);
-  const detectorRef = useRef<GestureDetector | null>(null);
-
-  const [cameraState, setCameraState] = useState<CameraState>("idle");
-  const [facePresent, setFacePresent] = useState(false);
+  const detectorRef = useRef(createMediaPipeDetector());
+  const streamRef = useRef<MediaStream | null>(null);
+  const [camera, setCamera] = useState<"idle" | "requesting" | "connected" | "denied" | "error">("idle");
+  const [status, setStatus] = useState<FaceDetectionStatus>({ facePresent: false, landmarksReady: false });
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    detectorRef.current = createPendingDetector();
-    return () => {
-      cameraRef.current?.stop();
-      detectorRef.current?.dispose();
-    };
+    const detector = detectorRef.current;
+    const off = detector.onStatus(setStatus);
+    return () => { off(); detector.dispose(); streamRef.current?.getTracks().forEach((t) => t.stop()); };
   }, []);
 
-  async function handleStart() {
+  async function start() {
     if (!videoRef.current) return;
-    setCameraState("requesting");
+    setCamera("requesting"); setError("");
     try {
-      const handle = await startCamera(videoRef.current);
-      cameraRef.current = handle;
-      await detectorRef.current?.attach(videoRef.current);
-      setCameraState("active");
-      // MediaPipe not wired yet — honest status: no face detection running.
-      setFacePresent(detectorRef.current?.status().facePresent ?? false);
-    } catch (err) {
-      setCameraState(classifyCameraError(err));
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser does not support webcam access.");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      streamRef.current = stream; videoRef.current.srcObject = stream; await videoRef.current.play();
+      await detectorRef.current.attach(videoRef.current); setCamera("connected");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unable to access the camera.";
+      setError(message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission") ? "Camera access was denied. Please allow camera access in your browser settings." : message);
+      setCamera(message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission") ? "denied" : "error");
     }
   }
 
-  function handleStop() {
-    cameraRef.current?.stop();
-    cameraRef.current = null;
-    detectorRef.current?.dispose();
-    detectorRef.current = createPendingDetector();
-    setFacePresent(false);
-    setCameraState("stopped");
-  }
-
-  const active = cameraState === "active";
-
-  return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
-        <Link to="/" className="text-2xl font-bold tracking-tight">
-          <span className="text-primary">Neuro</span>Gesture
-        </Link>
-        <span className="text-lg font-medium text-muted-foreground">Step 1 of 2 — Camera setup</span>
-      </header>
-
-      <main className="mx-auto max-w-5xl space-y-8 px-6 pb-16">
-        <h1 className="text-4xl font-bold">Camera Setup</h1>
-
-        {/* Status indicators */}
-        <div className="flex flex-wrap gap-4">
-          <StatusIndicator
-            label="Camera"
-            value={cameraStatusText[cameraState]}
-            tone={active ? "active" : cameraState === "denied" || cameraState === "error" ? "error" : cameraState === "requesting" ? "warning" : "neutral"}
-          />
-          <StatusIndicator
-            label="Face detection"
-            value={facePresent ? "Face detected" : active ? "Detector not connected yet" : "Waiting for camera"}
-            tone={facePresent ? "active" : active ? "warning" : "neutral"}
-          />
-        </div>
-
-        {cameraState === "denied" && (
-          <p role="alert" className="rounded-2xl border-2 border-destructive/40 bg-destructive/10 p-5 text-lg font-medium text-destructive">
-            Camera permission was denied. Please allow camera access in your browser's
-            site settings, then press “Start Camera” again.
-          </p>
-        )}
-
-        {/* Preview */}
-        <CameraPreview ref={videoRef} active={active} faceDetected={facePresent} />
-
-        {/* Controls */}
-        <div className="flex flex-wrap items-center gap-4">
-          <button
-            onClick={handleStart}
-            disabled={active || cameraState === "requesting"}
-            className="rounded-2xl bg-primary px-10 py-4 text-xl font-bold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {cameraState === "requesting" ? "Requesting…" : "Start Camera"}
-          </button>
-          <button
-            onClick={handleStop}
-            disabled={!active}
-            className="rounded-2xl border-2 border-border bg-card px-10 py-4 text-xl font-bold text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Stop Camera
-          </button>
-          <Link
-            to="/communicate"
-            className={`ml-auto rounded-2xl px-10 py-4 text-xl font-bold ${
-              active
-                ? "bg-success text-success-foreground hover:bg-success/90"
-                : "pointer-events-none bg-muted text-muted-foreground opacity-40"
-            }`}
-            aria-disabled={!active}
-          >
-            Continue to Communication →
-          </Link>
-        </div>
-
-        <p className="text-base text-muted-foreground">
-          Gesture detection (MediaPipe face tracking) will attach to this same video
-          feed. Until it is connected, the face indicator honestly reports that no
-          detector is running — nothing is simulated.
-        </p>
-      </main>
-    </div>
-  );
+  return <div className="ng-page">
+    <header className="ng-header"><Link to="/" className="ng-logo"><span>Neuro</span>Gesture</Link><span className="ng-step">Step 1 of 2 — Camera setup</span></header>
+    <main className="ng-container setup-layout">
+      <section><div className="eyebrow">LIVE CAMERA MODE</div><h1>Connect your camera</h1><p className="lead">Your laptop webcam is enough. NeuroGesture processes face landmarks directly in your browser.</p>
+        <div className="camera-card"><video ref={videoRef} className="setup-video" autoPlay muted playsInline />{camera !== "connected" && <div className="camera-placeholder"><div className="camera-icon">◉</div><strong>{camera === "requesting" ? "Requesting camera access…" : "Camera preview"}</strong><span>Press Start Camera to begin.</span></div>}{camera === "connected" && <div className="camera-badge">● Camera connected</div>}</div>
+        {error && <div className="error-box" role="alert">{error}</div>}
+        <div className="setup-actions"><button className="primary-btn" onClick={start} disabled={camera === "requesting" || camera === "connected"}>{camera === "requesting" ? "Connecting…" : "Start Camera"}</button><Link className={`primary-btn success-btn ${camera !== "connected" ? "disabled-link" : ""}`} to="/communicate" aria-disabled={camera !== "connected"}>Start Communication →</Link></div>
+      </section>
+      <aside className="status-stack"><h2>System status</h2><StatusRow label="Camera" value={camera === "connected" ? "Connected" : camera === "requesting" ? "Requesting…" : "Not connected"} ok={camera === "connected"}/><StatusRow label="Face" value={status.facePresent ? "Detected" : camera === "connected" ? "Looking for face…" : "Waiting"} ok={status.facePresent}/><StatusRow label="MediaPipe" value={status.landmarksReady ? "Connected" : "Not connected"} ok={status.landmarksReady}/><div className="info-box"><strong>What happens next?</strong><p>MediaPipe Face Landmarker tracks facial landmarks in real time. Your gaze moves the menu; a deliberate blink selects it.</p></div></aside>
+    </main>
+  </div>;
 }
+function StatusRow({ label, value, ok }: { label: string; value: string; ok: boolean }) { return <div className={`status-row ${ok ? "ok" : ""}`}><span><i />{label}</span><strong>{value}</strong></div>; }
