@@ -22,17 +22,24 @@ function SetupPage() {
   }, []);
 
   async function start() {
-    if (!videoRef.current) return;
+    if (!videoRef.current || camera === "requesting" || camera === "connected") return;
     setCamera("requesting"); setError("");
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser does not support webcam access.");
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-      streamRef.current = stream; videoRef.current.srcObject = stream; await videoRef.current.play();
-      await detectorRef.current.attach(videoRef.current); setCamera("connected");
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      await detectorRef.current.attach(videoRef.current);
+      setCamera("connected");
     } catch (e) {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       const message = e instanceof Error ? e.message : "Unable to access the camera.";
-      setError(message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission") ? "Camera access was denied. Please allow camera access in your browser settings." : message);
-      setCamera(message.toLowerCase().includes("denied") || message.toLowerCase().includes("permission") ? "denied" : "error");
+      const denied = /denied|permission|notallowed/i.test(message);
+      setError(denied ? "Camera access was denied. Please allow camera access in your browser settings." : message);
+      setCamera(denied ? "denied" : "error");
     }
   }
 
