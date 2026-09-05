@@ -1,138 +1,102 @@
-# EyeSpeak Connect
-
-Create a web application called "NeuroGesture".
-
-This is a student hackathon prototype for low-cost assistive communication using intentional eye and facial gestures through a laptop webcam.
-
-IMPORTANT:
-
-- Build this as a browser-based web application.
-
-- The primary target device is a laptop with a built-in webcam.
-
-- Use React and TypeScript.
-
-- Keep the architecture simple and modular so webcam/MediaPipe functionality can be added and tested separately.
-
-- Do not create a fake AI demo or simulated gesture detection.
-
-- The actual webcam and MediaPipe integration will be implemented in the application.
-
-Create these pages/components:
-
-1. Landing page
-
-- NeuroGesture logo/name
-
-- Short tagline: "Communicate without touching."
-
-- Brief explanation of the concept
-
-- "Start Communication" button
-
-- "How it works" section
-
-2. Camera setup page
-
-- Camera permission status
-
-- Large webcam preview area
-
-- Start Camera button
-
-- Stop Camera button
-
-- Camera status indicator
-
-- Face detection status indicator
-
-3. Communication page
-
-- Large accessible interface
-
-- Radial-style communication menu
-
-- Options:
-
-  Water
-
-  Food
-
-  Pain
-
-  Help
-
-  Call Caregiver
-
-  Adjust Bed
-
-  Bathroom
-
-  Yes
-
-  No
-
-  Message
-
-- Clearly show the currently selected option
-
-- Show the currently detected gesture
-
-- Show system status
-
-4. Message area
-
-- Display the selected communication message in large text
-
-- Provide clear confirmation feedback
-
-5. Help/Emergency demonstration
-
-- Create a clearly labelled prototype/simulation alert screen.
-
-- Do not claim that it sends a real emergency alert.
-
-- Show what an alert could look like when the user selects Help.
-
-Design:
-
-- Clean professional healthcare-accessibility style
-
-- Large text
-
-- High contrast
-
-- Minimal clutter
-
-- Rounded accessible controls
-
-- Responsive laptop layout
-
-- Clear visual feedback
-
-- Avoid excessive animations
-
-Create reusable components and keep webcam processing, gesture detection, and UI state logically separated.
-
-For now, focus on creating the complete UI and application structure. Do not invent webcam detection results.
-
-This project was built with [Lovable](https://lovable.dev).
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/0dd6c625-0afc-4a0f-920d-5a9bb228f85d).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+# NeuroGesture
+
+NeuroGesture is a browser-based assistive communication application for people who may have difficulty using conventional input. It uses a normal laptop webcam, MediaPipe Face Landmarker, and the Web Speech API to turn intentional eye movements and blinks into communication.
+
+## What works
+
+- Real webcam access with `getUserMedia` — no special hardware.
+- Real MediaPipe Face Landmarker processing in the browser.
+- Iris-position based left/right/up/down gaze detection.
+- Deliberate blink detection using an open → closed → open cycle and cooldown.
+- Debounced direction changes so tiny movements do not constantly change the selection.
+- Radial communication menu for Water, Food, Pain, Help, Call Caregiver, Adjust Bed, Bathroom, Yes, No, and Message.
+- Blink-to-select with spoken output through `SpeechSynthesis`.
+- Voice ON/OFF control.
+- Live System Status and expandable Detection Details for hackathon judging.
+- Clearly labelled Demo Mode for manual fallback. Demo Mode never reports simulated detection as real computer vision.
+- Keyboard fallback: arrow keys navigate and Enter/Space selects.
+- Friendly camera/model failure handling.
+
+## How it works
+
+`Laptop webcam → Face Landmarker → eye/iris landmarks → gaze direction → menu navigation → blink → selected message → speech`
+
+MediaPipe is initialized with `FilesetResolver.forVisionTasks()` and `FaceLandmarker.createFromOptions()` in `src/lib/gestures.ts`. The landmarker runs in VIDEO mode and receives the live `<video>` element. The app uses face landmarks around both eyes and iris landmarks to estimate gaze direction. A blink is recognized only after the eyes transition from open to closed and back to open, with a selection cooldown.
+
+MediaPipe Tasks processes input on-device; the current implementation does not upload camera frames to an application backend. See the MediaPipe privacy notice for the SDK's own metrics/privacy details.
+
+## Project structure
+
+```text
+src/
+  components/          Reusable UI components
+  hooks/               Existing app hooks
+  lib/
+    gestures.ts        Real MediaPipe + gaze/blink detection
+    communication.ts   Communication menu data
+    camera.ts           Existing camera helpers
+  routes/
+    index.tsx          Landing page
+    setup.tsx          Camera setup and MediaPipe readiness
+    communicate.tsx    Live communication UI
+    __root.tsx         Global app shell/styles
+  neurogesture.css     NeuroGesture-specific responsive UI
+```
+
+## Install and run
+
+Requires Node.js and npm (or Bun if preferred by your local environment).
+
+```bash
+npm install
 npm run dev
 ```
+
+Open the local Vite URL in a browser that supports webcam access. For deployment, camera access must be served from a secure context such as HTTPS (localhost is also treated as secure by browsers).
+
+## First-time camera setup
+
+1. Open **Start Communication**.
+2. Choose **Start Camera**.
+3. Allow camera permission when the browser asks.
+4. Wait for **MediaPipe: Connected** and **Face: Detected**.
+5. Continue to the communication screen.
+6. Look deliberately in a direction to move the highlighted option.
+7. Blink once deliberately (open → closed → open) to select it.
+8. The selected message is displayed and spoken when Voice is ON.
+
+If the camera is denied or unavailable, Live Mode reports the problem instead of inventing a face or gesture result. Demo Mode is available for a presentation fallback.
+
+## Hackathon demo (5 minutes)
+
+**0:00–0:45 — Problem**
+Explain that some users cannot reliably use a keyboard, touchscreen, or speech, while a laptop webcam is widely available.
+
+**0:45–1:30 — Concept**
+Show the flow: webcam → facial landmarks → gaze direction → menu → blink → speech.
+
+**1:30–2:30 — Live setup**
+Allow camera access and show the live Face/MediaPipe status becoming connected.
+
+**2:30–4:15 — Live communication**
+Look toward a menu direction and show the highlight move. Blink to select **Water**, **Pain**, or **Help**. Demonstrate the spoken message and the live status panel. Open Detection Details to show that the values come from the detector.
+
+**4:15–5:00 — Reliability and fallback**
+Explain the smoothing/cooldown logic, privacy model, keyboard fallback, and clearly labelled Demo Mode for unreliable hackathon camera environments.
+
+## Technologies
+
+- React + TypeScript
+- TanStack Start / Vite
+- `@mediapipe/tasks-vision` 1.0.1
+- MediaPipe Face Landmarker
+- Browser MediaDevices / `getUserMedia`
+- Web Speech API / `SpeechSynthesis`
+- Modern CSS
+- GitHub
+
+The MediaPipe package is currently published as version 1.0.1; Google's current web documentation shows the same `FilesetResolver` + `FaceLandmarker.createFromOptions` setup pattern.
+
+## Important limitations
+
+This is an assistive-technology prototype, not a medical device or emergency-response service. Camera-based gaze estimation is sensitive to lighting, camera position, glasses, head movement, and individual eye anatomy. **Help** and **Pain** are only local communication messages; the application does not contact emergency services or a caregiver automatically.
