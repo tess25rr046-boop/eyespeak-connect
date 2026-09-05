@@ -6,6 +6,10 @@ import { RadialMenu } from "../components/RadialMenu";
 import { MessageDisplay } from "../components/MessageDisplay";
 import { HelpAlertDemo } from "../components/HelpAlertDemo";
 import { StatusIndicator } from "../components/StatusIndicator";
+import { SuggestionPanel } from "../components/SuggestionPanel";
+import { MessageComposer } from "../components/MessageComposer";
+import { useServerFn } from "@tanstack/react-start";
+import { expandMessage } from "../lib/ai.functions";
 
 export const Route = createFileRoute("/communicate")({
   head: () => ({
@@ -38,6 +42,10 @@ function CommunicatePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmedMessage, setConfirmedMessage] = useState<string | null>(null);
   const [showHelpDemo, setShowHelpDemo] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [expanding, setExpanding] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const runExpand = useServerFn(expandMessage);
 
   // Gesture state comes from the detector once MediaPipe is wired in.
   // Until then it honestly reports that no detector is running.
@@ -51,6 +59,30 @@ function CommunicatePage() {
       setShowHelpDemo(true);
     }
     setConfirmedMessage(opt.message);
+    setAiError(null);
+    setRecent((r) => [...r, id].slice(-6));
+  }
+
+  async function handleExpand() {
+    if (!selectedId || !confirmedMessage) return;
+    const opt = COMMUNICATION_OPTIONS.find((o) => o.id === selectedId);
+    if (!opt) return;
+    setExpanding(true);
+    setAiError(null);
+    try {
+      const res = await runExpand({
+        data: {
+          label: opt.label,
+          baseMessage: confirmedMessage,
+          tone: opt.urgent ? "urgent" : "polite",
+        },
+      });
+      setConfirmedMessage(res.text);
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI rewording is unavailable right now.");
+    } finally {
+      setExpanding(false);
+    }
   }
 
   return (
@@ -83,7 +115,31 @@ function CommunicatePage() {
               message={confirmedMessage}
               confirmed={confirmedMessage !== null}
             />
+            {confirmedMessage && selectedId && (
+              <button
+                onClick={handleExpand}
+                disabled={expanding}
+                className="mt-4 rounded-2xl border-2 border-border px-6 py-3 text-lg font-bold disabled:opacity-60"
+              >
+                {expanding ? "Rewording…" : "Say it in a fuller sentence (AI)"}
+              </button>
+            )}
+            {aiError && (
+              <p role="alert" className="mt-3 text-base font-medium text-urgent">
+                {aiError}
+              </p>
+            )}
           </div>
+          {selectedId === "message" && (
+            <div className="mt-8">
+              <MessageComposer
+                onSend={(text) => {
+                  setConfirmedMessage(text);
+                  setAiError(null);
+                }}
+              />
+            </div>
+          )}
         </section>
 
         {/* Status sidebar */}
@@ -112,6 +168,14 @@ function CommunicatePage() {
             This panel will update live once MediaPipe gesture detection is connected.
             No detection results are simulated.
           </p>
+          <SuggestionPanel
+            options={COMMUNICATION_OPTIONS}
+            recent={recent}
+            onPick={(id) => {
+              setSelectedId(id);
+              setConfirmedMessage(null);
+            }}
+          />
           <button
             onClick={() => setShowHelpDemo(true)}
             className="w-full rounded-2xl border-2 border-urgent/40 bg-card px-6 py-4 text-lg font-bold text-urgent hover:bg-urgent/10"
