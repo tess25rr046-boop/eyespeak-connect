@@ -26,6 +26,7 @@ function CommunicatePage() {
   const selectedIdRef = useRef(selectedId), voiceOnRef = useRef(voiceOn), demoModeRef = useRef(demoMode);
   selectedIdRef.current = selectedId; voiceOnRef.current = voiceOn; demoModeRef.current = demoMode;
   const selected = useMemo(() => COMMUNICATION_OPTIONS.find((o) => o.id === selectedId) ?? COMMUNICATION_OPTIONS[0], [selectedId]);
+  const selectedOption = selected ?? { id: "water", label: "Water", message: "I need water.", angle: -90 };
 
   useEffect(() => {
     const detector = detectorRef.current;
@@ -55,8 +56,10 @@ function CommunicatePage() {
     }
   }
   function navigateDirection(direction: keyof typeof directionGroups) {
-    const group = directionGroups[direction], current = group.indexOf(selectedIdRef.current), next = current === -1 ? group[0] : group[(current + 1) % group.length];
-    setSelectedId(next);
+    const group = directionGroups[direction];
+    const current = group.indexOf(selectedIdRef.current);
+    const next = current === -1 ? group[0] : group[(current + 1) % group.length];
+    if (next) setSelectedId(next);
   }
   function selectOption(id: string, speak = false) {
     const option = COMMUNICATION_OPTIONS.find((o) => o.id === id); if (!option) return;
@@ -76,17 +79,17 @@ function CommunicatePage() {
     <header className="ng-header"><Link to="/" className="ng-logo"><span>Neuro</span>Gesture</Link><span className="ng-step">Step 2 of 2 — Communicate</span></header>
     <main className="ng-container communicate-layout">
       <section><div className="communication-topline"><div><div className="eyebrow">REAL-TIME ASSISTIVE COMMUNICATION</div><h1>What would you like to say?</h1></div><div className="mode-toggle"><button className={!demoMode ? "active" : ""} onClick={() => setDemoMode(false)}>Live Camera</button><button className={demoMode ? "demo-active" : ""} onClick={() => setDemoMode(true)}>Demo Mode</button></div></div>
-        <div className="radial-wrap"><div className="radial-guide" aria-hidden="true"/><div className="radial-center"><span>Selected option</span><strong>{selected.label}</strong><small>{demoMode ? "Demo mode — gestures ignored" : status.facePresent ? gestureLabels[detectedGesture] : "Please position your face in front of the camera"}</small></div>
+        <div className="radial-wrap"><div className="radial-guide" aria-hidden="true"/><div className="radial-center"><span>Selected option</span><strong>{selectedOption.label}</strong><small>{demoMode ? "Demo mode — gestures ignored" : status.facePresent ? gestureLabels[detectedGesture] : "Please position your face in front of the camera"}</small></div>
           {COMMUNICATION_OPTIONS.map((option) => <button key={option.id} className={`radial-option ${selectedId === option.id ? "selected" : ""} ${option.urgent ? "urgent" : ""}`} style={{ "--angle": `${option.angle}deg` } as React.CSSProperties} onClick={() => selectOption(option.id)}>{option.label}</button>)}
         </div>
-        {lastMessage && <div className={`message-banner ${selected.urgent ? "urgent-banner" : ""}`}><span>Message</span><strong>{lastMessage}</strong>{selected.urgent && <em>Attention</em>}</div>}
+        {lastMessage && <div className={`message-banner ${selectedOption.urgent ? "urgent-banner" : ""}`}><span>Message</span><strong>{lastMessage}</strong>{selectedOption.urgent && <em>Attention</em>}</div>}
         {selectedId === "message" && <div className="composer"><label htmlFor="custom-message">Custom message</label><div><input id="custom-message" value={messageDraft} onChange={(e) => setMessageDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); sendCustomMessage(); } }} placeholder="Type a message…"/><button className="primary-btn" onClick={sendCustomMessage}>Speak</button></div></div>}
       </section>
       <aside className="status-panel"><h2>SYSTEM STATUS</h2>
-        <StatusLine label="Camera" value={cameraError ? "Unavailable" : "Connected"} ok={!cameraError}/><StatusLine label="Face" value={status.facePresent ? "Detected" : "Not detected"} ok={status.facePresent}/><StatusLine label="Gesture detector" value={status.landmarksReady ? "Connected" : "Loading…"} ok={status.landmarksReady}/><StatusLine label="Detected gesture" value={demoMode ? "Demo controls" : gestureLabels[detectedGesture]} ok={detectedGesture !== "none"}/><StatusLine label="Selected option" value={selected.label} ok/><StatusLine label="System" value={status.landmarksReady && status.facePresent ? "READY" : "WAITING"} ok={status.landmarksReady && status.facePresent}/>
+        <StatusLine label="Camera" value={cameraError ? "Unavailable" : "Connected"} ok={!cameraError}/><StatusLine label="Face" value={status.facePresent ? "Detected" : "Not detected"} ok={status.facePresent}/><StatusLine label="Gesture detector" value={status.landmarksReady ? "Connected" : "Loading…"} ok={status.landmarksReady}/><StatusLine label="Detected gesture" value={demoMode ? "Demo controls" : gestureLabels[detectedGesture]} ok={detectedGesture !== "none"}/><StatusLine label="Selected option" value={selectedOption.label} ok/><StatusLine label="System" value={status.landmarksReady && status.facePresent ? "READY" : "WAITING"} ok={status.landmarksReady && status.facePresent}/>
         {cameraError && <div className="error-box small" role="alert">Camera access is required for Live Mode. {cameraError}</div>}
         <div className="control-row"><button onClick={() => setVoiceOn((v) => !v)} className="secondary-btn">{voiceOn ? "🔊 Voice ON" : "🔇 Voice OFF"}</button><button onClick={() => setDetailsOpen((v) => !v)} className="secondary-btn">{detailsOpen ? "Hide Details" : "Detection Details"}</button></div>
-        {detailsOpen && <div className="details-box"><p>Face detected: <b>{status.facePresent ? "YES" : "NO"}</b></p><p>Current direction: <b>{detectedGesture === "none" ? "NONE" : gestureLabels[detectedGesture].replace("Looking ", "").toUpperCase()}</b></p><p>Blink: <b>{detectedGesture === "blink-both" ? "YES" : "NO"}</b></p><p>Selected option: <b>{selected.label.toUpperCase()}</b></p><p>MediaPipe status: <b>{status.landmarksReady ? "CONNECTED" : "LOADING"}</b></p></div>}
+        {detailsOpen && <div className="details-box"><p>Face detected: <b>{status.facePresent ? "YES" : "NO"}</b></p><p>Current direction: <b>{detectedGesture === "none" ? "NONE" : gestureLabels[detectedGesture].replace("Looking ", "").toUpperCase()}</b></p><p>Blink: <b>{detectedGesture === "blink-both" ? "YES" : "NO"}</b></p><p>Selected option: <b>{selectedOption.label.toUpperCase()}</b></p><p>MediaPipe status: <b>{status.landmarksReady ? "CONNECTED" : "LOADING"}</b></p></div>}
         <div className="mini-camera"><video ref={videoRef} autoPlay muted playsInline/><span>{demoMode ? "DEMO MODE — gestures ignored" : "LIVE CAMERA"}</span></div>
         <button className="alert-demo-btn" onClick={() => { setSelectedId("help"); setLastMessage("I need help."); if (voiceOnRef.current) speakText("I need help."); }}>Preview help alert</button>
       </aside>
