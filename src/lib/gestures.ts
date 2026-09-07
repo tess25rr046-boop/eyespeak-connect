@@ -19,9 +19,13 @@ const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/was
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const LEFT_EYE = { outer: 33, inner: 133, upper: 159, lower: 145, iris: 468 };
 const RIGHT_EYE = { outer: 362, inner: 263, upper: 386, lower: 374, iris: 473 };
-const MIN_BLINK_MS = 120;
-const MAX_BLINK_MS = 900;
-const BLINK_COOLDOWN_MS = 850;
+const EAR_BLINK_THRESHOLD = 0.21;
+const BLINK_MIN_MS = 100;
+const BLINK_MAX_MS = 1000;
+const BLINK_COOLDOWN_MS = 900;
+const GAZE_SUPPRESS_AFTER_BLINK_MS = 700;
+const BLENDSHAPE_CLOSED_THRESHOLD = 0.55;
+const BLENDSHAPE_OPEN_THRESHOLD = 0.30;
 
 type FaceLandmarks = FaceLandmarkerResult["faceLandmarks"][number];
 type Landmark = NonNullable<FaceLandmarks[number]>;
@@ -46,6 +50,10 @@ function irisRatio(lm: FaceLandmarks, eye: typeof LEFT_EYE) {
     y: (p.y - top) / Math.max(0.0001, bottom - top),
   };
 }
+function blendshapeScore(result: FaceLandmarkerResult, name: string) {
+  const categories = result.faceBlendshapes[0]?.categories;
+  return categories?.find((category) => category.categoryName === name)?.score ?? null;
+}
 
 export class MediaPipeGestureDetector implements GestureDetector {
   private landmarker: FaceLandmarker | null = null;
@@ -57,6 +65,7 @@ export class MediaPipeGestureDetector implements GestureDetector {
   private blinkState: "open" | "closed" = "open";
   private blinkClosedAt = 0;
   private lastBlink = 0;
+  private gazeSuppressedUntil = 0;
   private currentStatus: FaceDetectionStatus = { facePresent: false, landmarksReady: false };
   private listeners = new Set<(frame: GestureFrame) => void>();
   private statusListeners = new Set<(status: FaceDetectionStatus) => void>();
@@ -64,7 +73,14 @@ export class MediaPipeGestureDetector implements GestureDetector {
   async attach(video: HTMLVideoElement) {
     this.video = video;
     const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-    const common = { runningMode: "VIDEO" as const, numFaces: 1, minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5 };
+    const common = {
+      runningMode: "VIDEO" as const,
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.5,
+      minFacePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      outputFaceBlendshapes: true,
+    };
     try {
       this.landmarker = await FaceLandmarker.createFromOptions(vision, { ...common, baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" } });
     } catch {
@@ -83,9 +99,44 @@ export class MediaPipeGestureDetector implements GestureDetector {
   }
   private emit(gesture: GestureKind, confidence: number, timestamp: number) {
     if (timestamp - this.lastEmit < 260 && gesture !== "blink-both") return;
-    this.lastEmit = timestamp; this.lastDirection = gesture;
+    this.lastEmit = timestamp;
+    if (gesture.startsWith("look-")) this.lastDirection = gesture;
     this.listeners.forEach((cb) => cb({ gesture, confidence, timestamp }));
   }
+
+  private detectBlink(result: FaceLandmarkerResult, lm: FaceLandmarks, now: number) {
+    const leftBlend = blendshapeScore(result, "eyeBlinkLeft");
+    const rightBlend = blendshapeScore(result, "eyeBlinkRight");
+    const hasBlendshapes = leftBlend !== null && rightBlend !== null;
+    const leftEar = eyeAspectRatio(lm, LEFT_EYE);
+    const rightEar = eyeAspectRatio(lm, RIGHT_EYE);
+
+    const closed = hasBlendshapes
+      ? leftBlend >= BLENDSHAPE_CLOSED_THRESHOLD && rightBlend >= BLENDSHAPE_CLOSED_THRESHOLD
+      : leftEar !== null && rightEar !== null && leftEar < EAR_BLINK_THRESHOLD && rightEar < EAR_BLINK_THRESHOLD;
+
+    const open = hasBlendshapes
+      ? leftBlend <= BLENDSHAPE_OPEN_THRESHOLD && rightBlend <= BLENDSHAPE_OPEN_THRESHOLD
+      : leftEar !== null && rightEar !== null && leftEar > EAR_BLINK_THRESHOLD + 0.025 && rightEar > EAR_BLINK_THRESHOLD + 0.025;
+
+    if (closed && this.blinkState === "open") {
+      this.blinkState = "closed";
+      this.blinkClosedAt = now;
+    } else if (open && this.blinkState === "closed") {
+      const closedFor = now - this.blinkClosedAt;
+      this.blinkState = "open";
+      this.blinkClosedAt = 0;
+      if (closedFor >= BLINK_MIN_MS && closedFor <= BLINK_MAX_MS && now - this.lastBlink >= BLINK_COOLDOWN_MS) {
+        this.lastBlink = now;
+        this.gazeSuppressedUntil = now + GAZE_SUPPRESS_AFTER_BLINK_MS;
+        this.lastDirection = "none";
+        this.emit("blink-both", 1, now);
+        return true;
+      }
+    }
+    return false;
+  }
+
   private loop = () => {
     if (!this.video || !this.landmarker) return;
     const video = this.video;
@@ -97,21 +148,10 @@ export class MediaPipeGestureDetector implements GestureDetector {
         const lm = result.faceLandmarks[0];
         this.setStatus({ facePresent: Boolean(lm), landmarksReady: true });
         if (lm) {
-          const leftBlink = eyeAspectRatio(lm, LEFT_EYE), rightBlink = eyeAspectRatio(lm, RIGHT_EYE);
-          if (leftBlink !== null && rightBlink !== null) {
-            const closed = leftBlink < 0.18 && rightBlink < 0.18;
-            if (closed && this.blinkState === "open") {
-              this.blinkState = "closed";
-              this.blinkClosedAt = now;
-            } else if (!closed && this.blinkState === "closed") {
-              const closedFor = now - this.blinkClosedAt;
-              this.blinkState = "open";
-              this.blinkClosedAt = 0;
-              if (closedFor >= MIN_BLINK_MS && closedFor <= MAX_BLINK_MS && now - this.lastBlink > BLINK_COOLDOWN_MS) {
-                this.lastBlink = now;
-                this.emit("blink-both", 1, now);
-              }
-            }
+          const blinkTriggered = this.detectBlink(result, lm, now);
+          if (blinkTriggered || now < this.gazeSuppressedUntil) {
+            this.animationFrame = requestAnimationFrame(this.loop);
+            return;
           }
 
           const leftIris = irisRatio(lm, LEFT_EYE), rightIris = irisRatio(lm, RIGHT_EYE);
@@ -132,6 +172,7 @@ export class MediaPipeGestureDetector implements GestureDetector {
     }
     this.animationFrame = requestAnimationFrame(this.loop);
   };
+
   dispose() {
     cancelAnimationFrame(this.animationFrame); this.animationFrame = 0; this.landmarker?.close(); this.landmarker = null; this.video = null;
     this.listeners.clear(); this.statusListeners.clear(); this.currentStatus = { facePresent: false, landmarksReady: false };
